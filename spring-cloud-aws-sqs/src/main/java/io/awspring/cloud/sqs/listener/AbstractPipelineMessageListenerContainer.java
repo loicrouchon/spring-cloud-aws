@@ -225,10 +225,12 @@ public abstract class AbstractPipelineMessageListenerContainer<T, O extends Cont
 	}
 
 	protected BackPressureHandler createBackPressureHandler() {
-		return SemaphoreBackPressureHandler.builder().batchSize(getContainerOptions().getMaxMessagesPerPoll())
-				.totalPermits(getContainerOptions().getMaxConcurrentMessages())
-				.acquireTimeout(getContainerOptions().getMaxDelayBetweenPolls())
-				.throughputConfiguration(getContainerOptions().getBackPressureMode()).build();
+		O containerOptions = getContainerOptions();
+		return SemaphoreBackPressureHandler.builder().batchSize(containerOptions.getMaxMessagesPerPoll())
+				.totalPermits(containerOptions.getMaxConcurrentMessages())
+				.acquireTimeout(containerOptions.getMaxDelayBetweenPolls())
+				.throughputConfiguration(containerOptions.getBackPressureMode())
+				.backPressureLimiter(containerOptions.getBackPressureLimiter()).build();
 	}
 
 	protected TaskExecutor createSourcesTaskExecutor() {

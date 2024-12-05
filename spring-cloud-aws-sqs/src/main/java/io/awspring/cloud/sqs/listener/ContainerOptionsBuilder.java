@@ -15,6 +15,7 @@
  */
 package io.awspring.cloud.sqs.listener;
 
+import io.awspring.cloud.sqs.listener.SemaphoreBackPressureHandler.BackPressureLimiter;
 import io.awspring.cloud.sqs.listener.acknowledgement.AcknowledgementOrdering;
 import io.awspring.cloud.sqs.listener.acknowledgement.handler.AcknowledgementMode;
 import io.awspring.cloud.sqs.support.converter.MessagingMessageConverter;
@@ -144,6 +145,14 @@ public interface ContainerOptionsBuilder<B extends ContainerOptionsBuilder<B, O>
 	 * @return this instance.
 	 */
 	B backPressureMode(BackPressureMode backPressureMode);
+
+	/**
+	 * Set the {@link BackPressureLimiter} for this container. Default is {@code null}.
+	 *
+	 * @param backPressureLimiter the backpressure limiter.
+	 * @return this instance.
+	 */
+	B backPressureLimiter(BackPressureLimiter backPressureLimiter);
 
 	/**
 	 * Set the maximum interval between acknowledgements for batch acknowledgements. The default depends on the specific

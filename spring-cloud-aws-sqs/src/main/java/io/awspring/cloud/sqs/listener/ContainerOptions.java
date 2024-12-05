@@ -15,6 +15,7 @@
  */
 package io.awspring.cloud.sqs.listener;
 
+import io.awspring.cloud.sqs.listener.SemaphoreBackPressureHandler.BackPressureLimiter;
 import io.awspring.cloud.sqs.listener.acknowledgement.AcknowledgementOrdering;
 import io.awspring.cloud.sqs.listener.acknowledgement.handler.AcknowledgementMode;
 import io.awspring.cloud.sqs.support.converter.MessagingMessageConverter;
@@ -128,6 +129,12 @@ public interface ContainerOptions<O extends ContainerOptions<O, B>, B extends Co
 	BackPressureMode getBackPressureMode();
 
 	/**
+	 * Return the {@link BackPressureLimiter} for this container.
+	 * @return the backpressure limiter.
+	 */
+	BackPressureLimiter getBackPressureLimiter();
+
+	/**
 	 * Return the {@link ListenerMode} mode for this container.
 	 * @return the listener mode.
 	 */
@@ -203,5 +210,4 @@ public interface ContainerOptions<O extends ContainerOptions<O, B>, B extends Co
 	 * @return the new builder instance.
 	 */
 	B toBuilder();
-
 }

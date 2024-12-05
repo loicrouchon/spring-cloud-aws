@@ -216,7 +216,7 @@ public abstract class AbstractSqsMessageSource<T> extends AbstractPollingMessage
 						v.stream().map(Message::messageId).collect(Collectors.toList()), this.queueUrl);
 			}
 			else {
-				logger.debug("Received {} messages from queue {}", v.size(), this.queueUrl);
+				logger.info("Received {} messages from queue {}", v.size(), this.queueUrl);
 			}
 		}
 	}
