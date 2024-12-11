@@ -227,19 +227,12 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	}
 
 	private int getPermitsToRelease(int amount) {
-		if (this.hasAcquiredFullPermits.get()) {
+		if (this.hasAcquiredFullPermits.compareAndSet(true, false)) {
 			int tokensLeft = this.lowThroughputTokens.addAndGet(-amount);
-//			if (tokensLeft == 0) {
-				int allAcquiredPermits = this.lowThroughputAcquiredPermits.getAndSet(0);
-				this.hasAcquiredFullPermits.compareAndSet(true, false);
-				// The first process that gets here should release all permits except for inflight messages
-				// We can have only one batch of messages at this point since we have all permits
-				return (allAcquiredPermits - tokensLeft);
-//				return (allAcquiredPermits - amount);
-//				return totalPermits - (allAcquiredPermits - amount);
-//			} else {
-//				return 0;
-//			}
+			int allAcquiredPermits = this.lowThroughputAcquiredPermits.getAndSet(0);
+			// The first process that gets here should release all permits except for inflight messages
+			// We can have only one batch of messages at this point since we have all permits
+			return (allAcquiredPermits - tokensLeft);
 		}
 		return amount;
 	}

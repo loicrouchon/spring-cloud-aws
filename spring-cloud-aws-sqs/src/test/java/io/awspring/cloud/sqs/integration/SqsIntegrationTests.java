@@ -22,8 +22,22 @@ import io.awspring.cloud.sqs.annotation.SqsListener;
 import io.awspring.cloud.sqs.config.SqsBootstrapConfiguration;
 import io.awspring.cloud.sqs.config.SqsListenerConfigurer;
 import io.awspring.cloud.sqs.config.SqsMessageListenerContainerFactory;
-import io.awspring.cloud.sqs.listener.*;
-import io.awspring.cloud.sqs.listener.acknowledgement.*;
+import io.awspring.cloud.sqs.listener.BatchVisibility;
+import io.awspring.cloud.sqs.listener.ContainerComponentFactory;
+import io.awspring.cloud.sqs.listener.MessageListenerContainer;
+import io.awspring.cloud.sqs.listener.QueueAttributes;
+import io.awspring.cloud.sqs.listener.SemaphoreBackPressureHandler;
+import io.awspring.cloud.sqs.listener.SqsContainerOptions;
+import io.awspring.cloud.sqs.listener.SqsContainerOptionsBuilder;
+import io.awspring.cloud.sqs.listener.SqsHeaders;
+import io.awspring.cloud.sqs.listener.SqsMessageListenerContainer;
+import io.awspring.cloud.sqs.listener.StandardSqsComponentFactory;
+import io.awspring.cloud.sqs.listener.Visibility;
+import io.awspring.cloud.sqs.listener.acknowledgement.Acknowledgement;
+import io.awspring.cloud.sqs.listener.acknowledgement.AcknowledgementExecutor;
+import io.awspring.cloud.sqs.listener.acknowledgement.AcknowledgementResultCallback;
+import io.awspring.cloud.sqs.listener.acknowledgement.BatchAcknowledgement;
+import io.awspring.cloud.sqs.listener.acknowledgement.SqsAcknowledgementExecutor;
 import io.awspring.cloud.sqs.listener.acknowledgement.handler.AcknowledgementMode;
 import io.awspring.cloud.sqs.listener.errorhandler.AsyncErrorHandler;
 import io.awspring.cloud.sqs.listener.interceptor.AsyncMessageInterceptor;
@@ -31,6 +45,23 @@ import io.awspring.cloud.sqs.listener.sink.MessageSink;
 import io.awspring.cloud.sqs.listener.source.AbstractSqsMessageSource;
 import io.awspring.cloud.sqs.listener.source.MessageSource;
 import io.awspring.cloud.sqs.operations.SqsTemplate;
+import java.lang.reflect.Method;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -55,16 +86,6 @@ import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageBatchRequestEntry;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
-import java.lang.reflect.Method;
-import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-
-import static java.util.Collections.max;
 import static java.util.Collections.singletonMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -79,9 +100,9 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
  * @author gustavomonarin
  */
 @SpringBootTest
-@TestPropertySource(properties = {"property.one=1", "property.five.seconds=5s",
-	"receives.message.queue.name=" + SqsIntegrationTests.RECEIVES_MESSAGE_QUEUE_NAME,
-	"low.resource.factory.name=" + SqsIntegrationTests.LOW_RESOURCE_FACTORY})
+@TestPropertySource(properties = { "property.one=1", "property.five.seconds=5s",
+		"receives.message.queue.name=" + SqsIntegrationTests.RECEIVES_MESSAGE_QUEUE_NAME,
+		"low.resource.factory.name=" + SqsIntegrationTests.LOW_RESOURCE_FACTORY })
 class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 	private static final Logger logger = LoggerFactory.getLogger(SqsIntegrationTests.class);
@@ -128,23 +149,23 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 	static void beforeTests() {
 		SqsAsyncClient client = createAsyncClient();
 		CompletableFuture.allOf(createQueue(client, RECEIVES_MESSAGE_QUEUE_NAME),
-			createQueue(client, DOES_NOT_ACK_ON_ERROR_QUEUE_NAME,
-				singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
-			createQueue(client, DOES_NOT_ACK_ON_ERROR_ASYNC_QUEUE_NAME,
-				singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
-			createQueue(client, DOES_NOT_ACK_ON_ERROR_BATCH_QUEUE_NAME,
-				singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
-			createQueue(client, DOES_NOT_ACK_ON_ERROR_BATCH_ASYNC_QUEUE_NAME,
-				singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
-			createQueue(client, RECEIVES_MESSAGE_ASYNC_QUEUE_NAME),
-			createQueue(client, RECEIVES_MESSAGE_BATCH_QUEUE_NAME),
-			createQueue(client, RESOLVES_PARAMETER_TYPES_QUEUE_NAME,
-				singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "20")),
-			createQueue(client, MANUALLY_CREATE_CONTAINER_QUEUE_NAME),
-			createQueue(client, MANUALLY_CREATE_INACTIVE_CONTAINER_QUEUE_NAME),
-			createQueue(client, MANUALLY_CREATE_FACTORY_QUEUE_NAME),
-			createQueue(client, CONSUMES_ONE_MESSAGE_AT_A_TIME_QUEUE_NAME),
-			createQueue(client, MAX_CONCURRENT_MESSAGES_QUEUE_NAME)).join();
+				createQueue(client, DOES_NOT_ACK_ON_ERROR_QUEUE_NAME,
+						singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
+				createQueue(client, DOES_NOT_ACK_ON_ERROR_ASYNC_QUEUE_NAME,
+						singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
+				createQueue(client, DOES_NOT_ACK_ON_ERROR_BATCH_QUEUE_NAME,
+						singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
+				createQueue(client, DOES_NOT_ACK_ON_ERROR_BATCH_ASYNC_QUEUE_NAME,
+						singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "1")),
+				createQueue(client, RECEIVES_MESSAGE_ASYNC_QUEUE_NAME),
+				createQueue(client, RECEIVES_MESSAGE_BATCH_QUEUE_NAME),
+				createQueue(client, RESOLVES_PARAMETER_TYPES_QUEUE_NAME,
+						singletonMap(QueueAttributeName.VISIBILITY_TIMEOUT, "20")),
+				createQueue(client, MANUALLY_CREATE_CONTAINER_QUEUE_NAME),
+				createQueue(client, MANUALLY_CREATE_INACTIVE_CONTAINER_QUEUE_NAME),
+				createQueue(client, MANUALLY_CREATE_FACTORY_QUEUE_NAME),
+				createQueue(client, CONSUMES_ONE_MESSAGE_AT_A_TIME_QUEUE_NAME),
+				createQueue(client, MAX_CONCURRENT_MESSAGES_QUEUE_NAME)).join();
 	}
 
 	@Autowired
@@ -204,15 +225,15 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		String messageBody = "doesNotAckOnErrorAsync-payload";
 		sqsTemplate.send(DOES_NOT_ACK_ON_ERROR_ASYNC_QUEUE_NAME, messageBody);
 		logger.debug("Sent message to queue {} with messageBody {}", DOES_NOT_ACK_ON_ERROR_ASYNC_QUEUE_NAME,
-			messageBody);
+				messageBody);
 		assertThat(latchContainer.doesNotAckAsyncLatch.await(10, TimeUnit.SECONDS)).isTrue();
 	}
 
 	@Test
 	void doesNotAckOnErrorBatch() throws Exception {
 		List<Message<String>> messages = IntStream.range(0, 10)
-			.mapToObj(index -> "doesNotAckOnErrorBatch-payload-" + index)
-			.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
+				.mapToObj(index -> "doesNotAckOnErrorBatch-payload-" + index)
+				.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
 		sqsTemplate.sendManyAsync(DOES_NOT_ACK_ON_ERROR_BATCH_QUEUE_NAME, messages);
 		logger.debug("Sent messages to queue {} with messages {}", DOES_NOT_ACK_ON_ERROR_BATCH_QUEUE_NAME, messages);
 		assertThat(latchContainer.doesNotAckBatchLatch.await(10, TimeUnit.SECONDS)).isTrue();
@@ -221,11 +242,11 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 	@Test
 	void doesNotAckOnErrorBatchAsync() throws Exception {
 		List<Message<String>> messages = IntStream.range(0, 10)
-			.mapToObj(index -> "doesNotAckOnErrorBatchAsync-payload-" + index)
-			.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
+				.mapToObj(index -> "doesNotAckOnErrorBatchAsync-payload-" + index)
+				.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
 		sqsTemplate.sendManyAsync(DOES_NOT_ACK_ON_ERROR_BATCH_ASYNC_QUEUE_NAME, messages);
 		logger.debug("Sent messages to queue {} with messages {}", DOES_NOT_ACK_ON_ERROR_BATCH_ASYNC_QUEUE_NAME,
-			messages);
+				messages);
 		assertThat(latchContainer.doesNotAckBatchAsyncLatch.await(10, TimeUnit.SECONDS)).isTrue();
 	}
 
@@ -253,7 +274,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		sqsTemplate.send(MANUALLY_CREATE_INACTIVE_CONTAINER_QUEUE_NAME, messageBody);
 		inactiveMessageListenerContainer.start();
 		logger.debug("Sent message to queue {} with messageBody {}", MANUALLY_CREATE_INACTIVE_CONTAINER_QUEUE_NAME,
-			messageBody);
+				messageBody);
 		assertThat(latchContainer.manuallyInactiveCreatedContainerLatch.await(10, TimeUnit.SECONDS)).isTrue();
 	}
 
@@ -307,9 +328,9 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		logger.debug("Sent 10 messages to queue {}", CONSUMES_ONE_MESSAGE_AT_A_TIME_QUEUE_NAME);
 		var latch = new CountDownLatch(100);
 		var container = SqsMessageListenerContainer.builder().sqsAsyncClient(BaseSqsIntegrationTest.createAsyncClient())
-			.queueNames(CONSUMES_ONE_MESSAGE_AT_A_TIME_QUEUE_NAME).configure(options -> options
-				.pollTimeout(Duration.ofSeconds(1)).maxConcurrentMessages(1).maxMessagesPerPoll(1))
-			.messageListener(msg -> latch.countDown()).build();
+				.queueNames(CONSUMES_ONE_MESSAGE_AT_A_TIME_QUEUE_NAME).configure(options -> options
+						.pollTimeout(Duration.ofSeconds(1)).maxConcurrentMessages(1).maxMessagesPerPoll(1))
+				.messageListener(msg -> latch.countDown()).build();
 		container.start();
 		assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
 		container.stop();
@@ -317,21 +338,21 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 	private List<Message<String>> create10Messages(String testName) {
 		return IntStream.range(0, 10).mapToObj(index -> testName + "-payload-" + index)
-			.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
+				.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
 	}
 
 	@Test
 	void maxConcurrentMessages() {
 		List<Message<String>> messages1 = IntStream.range(0, 10)
-			.mapToObj(index -> "maxConcurrentMessages-payload-" + index)
-			.map(payload -> MessageBuilder.withPayload(payload).build()).toList();
+				.mapToObj(index -> "maxConcurrentMessages-payload-" + index)
+				.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
 		List<Message<String>> messages2 = IntStream.range(10, 20)
-			.mapToObj(index -> "maxConcurrentMessages-payload-" + index)
-			.map(payload -> MessageBuilder.withPayload(payload).build()).toList();
+				.mapToObj(index -> "maxConcurrentMessages-payload-" + index)
+				.map(payload -> MessageBuilder.withPayload(payload).build()).collect(Collectors.toList());
 		sqsTemplate.sendManyAsync(MAX_CONCURRENT_MESSAGES_QUEUE_NAME, messages1);
 		sqsTemplate.sendManyAsync(MAX_CONCURRENT_MESSAGES_QUEUE_NAME, messages2);
-		logger.info("Sent messages to queue {} with messages {} and {}", MAX_CONCURRENT_MESSAGES_QUEUE_NAME, messages1,
-			messages2);
+		logger.debug("Sent messages to queue {} with messages {} and {}", MAX_CONCURRENT_MESSAGES_QUEUE_NAME, messages1,
+				messages2);
 		assertDoesNotThrow(() -> latchContainer.maxConcurrentMessagesBarrier.await(10, TimeUnit.SECONDS));
 	}
 
@@ -569,13 +590,14 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 		@SqsListener(queueNames = RECEIVES_MESSAGE_BATCH_QUEUE_NAME, factory = MANUAL_ACK_BATCH_FACTORY, id = "receivesMessageBatchListener")
 		CompletableFuture<Void> listen(List<String> messages, BatchAcknowledgement<String> acknowledgement,
-									   BatchVisibility visibility) throws Exception {
+				BatchVisibility visibility) throws Exception {
 			logger.debug("Received messages in listener: " + messages);
 
 			if (firstPass.compareAndSet(true, false)) {
 				visibility.changeTo(1);
 				Thread.sleep(1000);
-			} else {
+			}
+			else {
 				acknowledgement.acknowledge();
 			}
 
@@ -631,7 +653,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		@SqsListener(queueNames = DOES_NOT_ACK_ON_ERROR_BATCH_QUEUE_NAME, messageVisibilitySeconds = "2", factory = ACK_AFTER_SECOND_ERROR_FACTORY, id = "does-not-ack-batch")
 		void listen(List<Message<String>> messages) {
 			logger.debug("Received messages {} from queue {}", MessageHeaderUtils.getId(messages),
-				messages.get(0).getHeaders().get(SqsHeaders.SQS_QUEUE_NAME_HEADER));
+					messages.get(0).getHeaders().get(SqsHeaders.SQS_QUEUE_NAME_HEADER));
 			messages.forEach(msg -> latchContainer.doesNotAckBatchLatch.countDown());
 			throw new RuntimeException("Expected exception from does-not-ack-batch");
 		}
@@ -645,10 +667,10 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		@SqsListener(queueNames = DOES_NOT_ACK_ON_ERROR_BATCH_ASYNC_QUEUE_NAME, factory = ACK_AFTER_SECOND_ERROR_FACTORY, id = "does-not-ack-batch-async")
 		CompletableFuture<Void> listen(List<Message<String>> messages) {
 			logger.debug("Received messages {} from queue {}", MessageHeaderUtils.getId(messages),
-				messages.get(0).getHeaders().get(SqsHeaders.SQS_QUEUE_NAME_HEADER));
+					messages.get(0).getHeaders().get(SqsHeaders.SQS_QUEUE_NAME_HEADER));
 			messages.forEach(msg -> latchContainer.doesNotAckBatchAsyncLatch.countDown());
 			return CompletableFutures
-				.failedFuture(new RuntimeException("Expected exception from does-not-ack-batch-async"));
+					.failedFuture(new RuntimeException("Expected exception from does-not-ack-batch-async"));
 		}
 	}
 
@@ -659,8 +681,8 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 		@SqsListener(queueNames = RESOLVES_PARAMETER_TYPES_QUEUE_NAME, factory = MANUAL_ACK_FACTORY, id = "resolves-parameter")
 		void listen(Message<String> message, MessageHeaders headers, Acknowledgement ack, Visibility visibility,
-					QueueAttributes queueAttributes, software.amazon.awssdk.services.sqs.model.Message originalMessage)
-			throws Exception {
+				QueueAttributes queueAttributes, software.amazon.awssdk.services.sqs.model.Message originalMessage)
+				throws Exception {
 			Assert.notNull(headers, "Received null MessageHeaders");
 			Assert.notNull(ack, "Received null Acknowledgement");
 			Assert.notNull(visibility, "Received null Visibility");
@@ -669,7 +691,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 			Assert.notNull(message, "Received null message");
 			logger.debug("Received message in Listener Method: " + message);
 			Assert.notNull(queueAttributes.getQueueAttribute(QueueAttributeName.QUEUE_ARN),
-				"QueueArn attribute not found");
+					"QueueArn attribute not found");
 
 			visibility.changeTo(1);
 
@@ -690,22 +712,10 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 		@SqsListener(queueNames = MAX_CONCURRENT_MESSAGES_QUEUE_NAME, maxMessagesPerPoll = "10", maxConcurrentMessages = "20", id = "max-concurrent-messages")
 		void listen(String message) throws BrokenBarrierException, InterruptedException {
-			logger.info("Received message in Listener Method: " + message);
+			logger.debug("Received message in Listener Method: " + message);
 			latchContainer.maxConcurrentMessagesBarrier.await();
 		}
 	}
-
-//	static class BackPressureLimitListener {
-//
-//		@Autowired
-//		LatchContainer latchContainer;
-//
-//		@SqsListener(queueNames = BACK_PRESSURE_LIMITER_QUEUE_NAME, factory = BACK_PRESSURE_LIMITER_FACTORY, id = "backPressureLimitListener")
-//		void listen(String message, @Header(SqsHeaders.SQS_QUEUE_NAME_HEADER) String queueName) {
-//			logger.debug("Received message {} from queue {}", message, queueName);
-//			latchContainer.backPressureLimitListener.countDown();
-//		}
-//	}
 
 	static class LatchContainer {
 
@@ -1049,15 +1059,15 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 				}
 
 				private Collection<DeleteMessageBatchRequestEntry> getBatchEntries(
-					Collection<Message<Object>> messages) {
+						Collection<Message<Object>> messages) {
 					return messages.stream().map(this::getBatchEntry).collect(Collectors.toList());
 				}
 
 				private DeleteMessageBatchRequestEntry getBatchEntry(Message<Object> message) {
 					return DeleteMessageBatchRequestEntry.builder().id(UUID.randomUUID().toString())
-						.receiptHandle(
-							MessageHeaderUtils.getHeaderAsString(message, SqsHeaders.SQS_RECEIPT_HANDLE_HEADER))
-						.build();
+							.receiptHandle(
+									MessageHeaderUtils.getHeaderAsString(message, SqsHeaders.SQS_RECEIPT_HANDLE_HEADER))
+							.build();
 				}
 			};
 		}
@@ -1067,9 +1077,9 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 				@Override
 				public void onSuccess(Collection<Message<Object>> messages) {
 					logger.debug("Invoking on success acknowledgement result callback for {}",
-						MessageHeaderUtils.getId(messages));
+							MessageHeaderUtils.getId(messages));
 					if (RECEIVES_MESSAGE_QUEUE_NAME.equals(MessageHeaderUtils
-						.getHeaderAsString(messages.iterator().next(), SqsHeaders.SQS_QUEUE_NAME_HEADER))) {
+							.getHeaderAsString(messages.iterator().next(), SqsHeaders.SQS_QUEUE_NAME_HEADER))) {
 						latchContainer.acknowledgementCallbackSuccessLatch.countDown();
 					}
 				}
@@ -1077,9 +1087,9 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 				@Override
 				public void onFailure(Collection<Message<Object>> messages, Throwable t) {
 					logger.debug("Invoking on failure acknowledgement result callback for {}",
-						MessageHeaderUtils.getId(messages));
+							MessageHeaderUtils.getId(messages));
 					if (DOES_NOT_ACK_ON_ERROR_QUEUE_NAME.equals(MessageHeaderUtils
-						.getHeaderAsString(messages.iterator().next(), SqsHeaders.SQS_QUEUE_NAME_HEADER))) {
+							.getHeaderAsString(messages.iterator().next(), SqsHeaders.SQS_QUEUE_NAME_HEADER))) {
 						latchContainer.acknowledgementCallbackErrorLatch.countDown();
 					}
 				}
