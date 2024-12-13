@@ -145,23 +145,6 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		return hasAcquiredPartial ? permitsToRequest : 0;
 	}
 
-	AtomicInteger logIndex = new AtomicInteger(0);
-	Map<Integer, String> logs = new ConcurrentHashMap<>();
-
-	private void logloglog(String operation) {
-		if (logIndex.get() == 0) {
-			logs.put(0,
-					"statistics,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s".formatted("id", "operation", "idx", "batchSize",
-							"totalPermits", "permitsLimit", "availablePermits", "lowThroughputAcquiredPermits",
-							"lowThroughputTokens", "hasAcquiredFullPermits", "currentThroughputMode", "timestamp"));
-		}
-		int idx = logIndex.incrementAndGet();
-		logs.put(idx,
-				"statistics,%s,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s".formatted(id, operation, idx, batchSize, totalPermits,
-						permitsLimit.get(), semaphore.availablePermits(), lowThroughputAcquiredPermits.get(),
-						lowThroughputTokens.get(), hasAcquiredFullPermits, currentThroughputMode, Instant.now()));
-	}
-
 	private int requestInLowThroughputMode() throws InterruptedException {
 		// Although LTM can be set / unset by many processes, only the MessageSource thread gets here,
 		// so no actual concurrency
@@ -200,20 +183,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 			return false;
 		}
 		logger.trace("Acquiring {} permits for {} in TM {}", amount, this.id, this.currentThroughputMode);
-		logloglog("try-acquire-before");
 		boolean hasAcquired = this.semaphore.tryAcquire(amount, this.acquireTimeout.toMillis(), TimeUnit.MILLISECONDS);
-		logloglog("try-acquire-after");
-		try {
-			Files.writeString(
-					Path.of("/Users/rouchonl/oss/spring-cloud-aws/spring-cloud-aws-sqs/target/statistics-%s.csv"
-							.formatted(id)),
-					logs.entrySet().stream().sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue)
-							.collect(Collectors.joining("\n")),
-					StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-		}
-		catch (IOException e) {
-			throw new RuntimeException(e);
-		}
 		if (hasAcquired) {
 			logger.trace("{} permits acquired for {} in TM {}. Permits left: {}, Permits Limits: {}", amount, this.id,
 					currentThroughputModeNow, this.semaphore.availablePermits(), this.permitsLimit.get());
@@ -231,9 +201,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	public void releaseBatch() {
 		maybeSwitchToLowThroughputMode();
 		int permitsToRelease = getPermitsToRelease(this.batchSize);
-		logloglog("release-batch-before");
 		this.semaphore.release(permitsToRelease);
-		logloglog("release-batch-after");
 		logger.trace("Released {} permits for {}. Permits left: {}", permitsToRelease, this.id,
 				this.semaphore.availablePermits());
 	}
@@ -258,9 +226,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 				this.semaphore.availablePermits());
 		maybeSwitchToHighThroughputMode(amount);
 		int permitsToRelease = getPermitsToRelease(amount);
-		logloglog("release-before");
 		this.semaphore.release(permitsToRelease);
-		logloglog("release-after");
 		logger.trace("Released {} permits for {}. Permits left: {}", permitsToRelease, this.id,
 				this.semaphore.availablePermits());
 	}
@@ -291,10 +257,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		isDraining.set(true);
 		updateMaxPermitsLimit(this.totalPermits);
 		try {
-			logloglog("drain-before");
-			boolean value = this.semaphore.tryAcquire(totalPermits, (int) timeout.getSeconds(), TimeUnit.SECONDS);
-			logloglog("drain-after");
-			return value;
+			return this.semaphore.tryAcquire(totalPermits, (int) timeout.getSeconds(), TimeUnit.SECONDS);
 		}
 		catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
@@ -321,15 +284,11 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		int oldValue = permitsLimit.getAndUpdate(i -> Math.max(0, Math.min(newCurrentMaxPermits, totalPermits)));
 		if (newCurrentMaxPermits < oldValue) {
 			int blockedPermits = oldValue - newCurrentMaxPermits;
-			logloglog("update-limit-reduce-permit-before");
 			semaphore.reducePermits(blockedPermits);
-			logloglog("update-limit-reduce-permit-after");
 		}
 		else if (newCurrentMaxPermits > oldValue) {
 			int releasedPermits = newCurrentMaxPermits - oldValue;
-			logloglog("update-limit-release-permit-before");
 			semaphore.release(releasedPermits);
-			logloglog("update-limit-release-permit-after");
 		}
 	}
 

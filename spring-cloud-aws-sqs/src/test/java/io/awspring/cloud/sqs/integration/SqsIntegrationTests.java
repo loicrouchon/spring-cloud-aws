@@ -51,10 +51,6 @@ import io.awspring.cloud.sqs.listener.source.AbstractSqsMessageSource;
 import io.awspring.cloud.sqs.listener.source.MessageSource;
 import io.awspring.cloud.sqs.operations.SqsTemplate;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -616,8 +612,6 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		};
 		try {
 			container.start();
-			List<String> lines = new ArrayList<>();
-			lines.add("maxConcurrentRq,concurrentRq,limit,max-min(limit|10),expectedMax,max-expectedMax");
 			Random random = new Random();
 			int limitsSum = 0;
 			int maxConcurrentRqSum = 0;
@@ -636,18 +630,8 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 					limitsSum += actualLimit;
 					maxConcurrentRqSum += max;
 				}
-				int expectedMax = limit;
-				for (int i = changeLimitCount - 1; i >= 0 && i > changeLimitCount - 4; i--) {
-					expectedMax = Math.min(10, Math.max(expectedMax, progressiveLimitChange.applyAsInt(i)));
-				}
-				lines.add("%d,%d,%d,%d,%d,%d".formatted(max, concurrentRequest.get(), limit, max - actualLimit,
-						expectedMax, max - expectedMax));
 			}
 			assertThat(maxConcurrentRqSum).isLessThanOrEqualTo(limitsSum);
-			Files.writeString(
-					Path.of("/Users/rouchonl/oss/spring-cloud-aws/spring-cloud-aws-sqs/target/concurrent-rq.csv"),
-					String.join("\n", lines), StandardCharsets.UTF_8, StandardOpenOption.CREATE,
-					StandardOpenOption.TRUNCATE_EXISTING);
 			assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
 		}
 		finally {
