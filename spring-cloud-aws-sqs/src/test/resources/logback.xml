@@ -25,7 +25,7 @@
 	<logger name="io.awspring.cloud.sqs" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.listener.SqsMessageListenerContainer" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.listener.AsyncComponentAdapters" level="INFO"/>
-	<logger name="io.awspring.cloud.sqs.listener.source.AbstractPollingMessageSource" level="TRACE"/>
+	<logger name="io.awspring.cloud.sqs.listener.source.AbstractPollingMessageSource" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.listener.SemaphoreBackPressureHandler" level="TRACE"/>
 	<logger name="io.awspring.cloud.sqs.QueueAttributesResolver" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.listener.source" level="INFO"/>
@@ -41,7 +41,7 @@
 	<logger name="io.awspring.cloud.sqs.operations" level="INFO"/>
 
 	<logger name="io.awspring.cloud.sqs.integration.BaseSqsIntegrationTest" level="INFO"/>
-	<logger name="io.awspring.cloud.sqs.integration.SqsIntegrationTests" level="INFO"/>
+	<logger name="io.awspring.cloud.sqs.integration.SqsIntegrationTests" level="DEBUG"/>
 	<logger name="io.awspring.cloud.sqs.integration.SqsFifoIntegrationTests" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.integration.SqsLoadIntegrationTests" level="INFO"/>
 	<logger name="io.awspring.cloud.sqs.integration.SqsInterceptorIntegrationTests" level="INFO"/>
