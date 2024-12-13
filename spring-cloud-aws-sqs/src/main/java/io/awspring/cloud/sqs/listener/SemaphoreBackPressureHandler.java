@@ -15,22 +15,13 @@
  */
 package io.awspring.cloud.sqs.listener;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.Assert;
@@ -61,7 +52,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	/**
 	 * The current limit of permits that can be acquired at the current time. The permits limit is defined in the [0,
 	 * totalPermits] interval. A value of {@literal 0} means that no permits can be acquired.
-	 *
+	 * <p>
 	 * This value is updated based on the downstream backpressure reported by the {@link #backPressureLimiter}.
 	 */
 	private final AtomicInteger permitsLimit;
@@ -72,9 +63,11 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 
 	private volatile CurrentThroughputMode currentThroughputMode;
 
+	/**
+	 * The value at the time of the low throughput acquire of the minimum between {@link #permitsLimit} and
+	 * {@link #totalPermits}.
+	 */
 	private final AtomicInteger lowThroughputAcquiredPermits = new AtomicInteger(0);
-
-	private final AtomicInteger lowThroughputTokens = new AtomicInteger(0);
 
 	private final AtomicBoolean hasAcquiredFullPermits = new AtomicBoolean(false);
 
@@ -169,7 +162,6 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 			}
 			else {
 				lowThroughputAcquiredPermits.set(permitsToRequest);
-				lowThroughputTokens.set(tokens);
 			}
 			return tokens;
 		}
@@ -233,11 +225,10 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 
 	private int getPermitsToRelease(int amount) {
 		if (this.hasAcquiredFullPermits.compareAndSet(true, false)) {
-			int tokensLeft = this.lowThroughputTokens.addAndGet(-amount);
 			int allAcquiredPermits = this.lowThroughputAcquiredPermits.getAndSet(0);
 			// The first process that gets here should release all permits except for inflight messages
 			// We can have only one batch of messages at this point since we have all permits
-			return (allAcquiredPermits - tokensLeft);
+			return (allAcquiredPermits - (min(this.batchSize, allAcquiredPermits) - amount));
 		}
 		return amount;
 	}
@@ -292,8 +283,8 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		}
 	}
 
-	public static class ReducibleSemaphore extends Semaphore {
-		public ReducibleSemaphore(int permits) {
+	private static class ReducibleSemaphore extends Semaphore {
+		ReducibleSemaphore(int permits) {
 			super(permits);
 		}
 

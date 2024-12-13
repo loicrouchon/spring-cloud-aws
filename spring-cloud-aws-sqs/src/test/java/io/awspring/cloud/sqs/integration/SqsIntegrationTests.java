@@ -619,7 +619,6 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 			while (latch.getCount() > 0 && changeLimitCount < nbMessages) {
 				changeLimitCount++;
 				int limit = progressiveLimitChange.applyAsInt(changeLimitCount);
-				logger.info("max concurrent rq {} (changeLimitCount {})", maxConcurrentRequest.get(), changeLimitCount);
 				limiter.setLimit(limit);
 				maxConcurrentRequest.set(0);
 				sleep(random.nextInt(10));
