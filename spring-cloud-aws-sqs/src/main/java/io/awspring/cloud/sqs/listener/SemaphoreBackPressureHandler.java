@@ -25,7 +25,9 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -43,11 +45,6 @@ import org.springframework.util.Assert;
 public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandler, IdentifiableContainerComponent {
 
 	private static final Logger logger = LoggerFactory.getLogger(SemaphoreBackPressureHandler.class);
-
-	public interface BackPressureLimiter {
-
-		int limit();
-	}
 
 	private final BackPressureLimiter backPressureLimiter;
 
@@ -182,7 +179,6 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 						permitsToRequest, this.id, this.semaphore.availablePermits(), this.permitsLimit.get());
 			}
 			int tokens = min(this.batchSize, permitsToRequest);
-			// FIXME I feel this is gonna be a bug here.
 			// We've acquired all permits - there's no other process currently processing messages
 			if (!this.hasAcquiredFullPermits.compareAndSet(false, true)) {
 				logger.warn("hasAcquiredFullPermits was already true. Permits left: {}, Permits Limits: {}",
@@ -293,7 +289,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		logger.debug("Waiting for up to {} seconds for approx. {} permits to be released for {}", timeout.getSeconds(),
 				this.totalPermits - this.semaphore.availablePermits(), this.id);
 		isDraining.set(true);
-		updateMaxPermitsLimit(totalPermits);
+		updateMaxPermitsLimit(this.totalPermits);
 		try {
 			logloglog("drain-before");
 			boolean value = this.semaphore.tryAcquire(totalPermits, (int) timeout.getSeconds(), TimeUnit.SECONDS);

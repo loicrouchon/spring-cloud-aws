@@ -27,11 +27,11 @@ import io.awspring.cloud.sqs.annotation.SqsListener;
 import io.awspring.cloud.sqs.config.SqsBootstrapConfiguration;
 import io.awspring.cloud.sqs.config.SqsListenerConfigurer;
 import io.awspring.cloud.sqs.config.SqsMessageListenerContainerFactory;
+import io.awspring.cloud.sqs.listener.BackPressureLimiter;
 import io.awspring.cloud.sqs.listener.BatchVisibility;
 import io.awspring.cloud.sqs.listener.ContainerComponentFactory;
 import io.awspring.cloud.sqs.listener.MessageListenerContainer;
 import io.awspring.cloud.sqs.listener.QueueAttributes;
-import io.awspring.cloud.sqs.listener.SemaphoreBackPressureHandler;
 import io.awspring.cloud.sqs.listener.SqsContainerOptions;
 import io.awspring.cloud.sqs.listener.SqsContainerOptionsBuilder;
 import io.awspring.cloud.sqs.listener.SqsHeaders;
@@ -56,10 +56,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntUnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeAll;
@@ -349,7 +361,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		assertDoesNotThrow(() -> latchContainer.maxConcurrentMessagesBarrier.await(10, TimeUnit.SECONDS));
 	}
 
-	static final class Limiter implements SemaphoreBackPressureHandler.BackPressureLimiter {
+	static final class Limiter implements BackPressureLimiter {
 		private final AtomicInteger limit;
 
 		Limiter(int max) {
@@ -506,23 +518,21 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 			container.start();
 
 			controller.advance(50);
-			// TODO, currently this works, but having this discrepancy is not ideal of 5 is not ideal. This is due to
-			// the fact that the message listener first advance, then waits for the semaphore to be released. We could
-			// change the order of these operations to harmonize the behavior, which in theory would allow to get rid
-			// of this discrepancy, but not sure I have the energy tonight. A side effect could be that we need to wait
-			// for 2 cycles to see the effect of the change in limit, which is not ideal either.
 			controller.waitForAdvance(50);
-			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(5); // not limiting queue processing capacity
+			// not limiting queue processing capacity
+			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(5);
 			controller.updateLimitAndWaitForReset(2);
 			controller.advance(50);
 
 			controller.waitForAdvance(50);
-			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(2); // limiting queue processing capacity
+			// limiting queue processing capacity
+			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(2);
 			controller.updateLimitAndWaitForReset(7);
 			controller.advance(50);
 
 			controller.waitForAdvance(50);
-			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(5); // not limiting queue processing capacity
+			// not limiting queue processing capacity
+			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(5);
 			controller.updateLimitAndWaitForReset(3);
 			controller.advance(50);
 			sleep(10L);
@@ -534,12 +544,14 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 
 			controller.waitForAdvance(50);
 			assertThat(controller.maxConcurrentRequest.get()).isEqualTo(3);
-			controller.updateLimit(0); // stopping processing of the queue
+			// stopping processing of the queue
+			controller.updateLimit(0);
 			controller.advance(50);
 			assertThat(advanceSemaphore.tryAcquire(10, 5, TimeUnit.SECONDS))
 					.withFailMessage("Acquiring semaphore should have timed out as limit was set to 0").isFalse();
 
-			controller.updateLimit(6); // resume queue processing
+			// resume queue processing
+			controller.updateLimit(6);
 
 			controller.waitForAdvance(50);
 			assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
@@ -550,6 +562,21 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		}
 	}
 
+	/**
+	 * This test simulates a progressive change in the back pressure limit. Unlike
+	 * {@link #changeInBackPressureLimitShouldAdaptQueueProcessingCapacity()}, this test does not block message
+	 * consumption while updating the limit.
+	 * <p>
+	 * The limit is updated in a loop until all messages are consumed. The update follows a triangle wave pattern with a
+	 * minimum of 0, a maximum of 15, and a period of 30 iterations. After each update of the limit, the test waits up
+	 * to 10ms and samples the maximum number of concurrent messages that were processed since the update. This number
+	 * can be higher than the defined limit during the adaptation period of the decreasing limit wave. For the
+	 * increasing limit wave, it is usually lower due to the adaptation delay. In both cases, the maximum number of
+	 * concurrent messages being processed rapidly converges toward the defined limit.
+	 * <p>
+	 * The test passes if the sum of the sampled maximum number of concurrently processed messages is lower than the sum
+	 * of the limits at those points in time.
+	 */
 	@Test
 	void unsynchronizedChangesInBackPressureLimitShouldAdaptQueueProcessingCapacity() throws Exception {
 		AtomicInteger concurrentRequest = new AtomicInteger();
@@ -577,45 +604,46 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 					concurrentRequest.decrementAndGet();
 					advanceSemaphore.release();
 				}).build();
+		IntUnaryOperator progressiveLimitChange = (int x) -> {
+			int period = 30;
+			int halfPeriod = period / 2;
+			if (x % period < halfPeriod) {
+				return x % halfPeriod;
+			}
+			else {
+				return halfPeriod - (x % halfPeriod);
+			}
+		};
 		try {
 			container.start();
-			int changeLimitCount = 0;
 			List<String> lines = new ArrayList<>();
-			int limitsSum = 0;
-			int maxSum = 0;
-			int maxOverLimitSum = 0;
-			int maxBelowLimitSum = 0;
 			lines.add("maxConcurrentRq,concurrentRq,limit,max-min(limit|10),expectedMax,max-expectedMax");
-			while (latch.getCount() > 0 && changeLimitCount < 1000) {
+			Random random = new Random();
+			int limitsSum = 0;
+			int maxConcurrentRqSum = 0;
+			int changeLimitCount = 0;
+			while (latch.getCount() > 0 && changeLimitCount < nbMessages) {
 				changeLimitCount++;
-				// if (maxConcurrentRequest.get() > 0 || changeLimitCount % 5 == 0) {
-				int newLimit = triangle(changeLimitCount, 30);
+				int limit = progressiveLimitChange.applyAsInt(changeLimitCount);
 				logger.info("max concurrent rq {} (changeLimitCount {})", maxConcurrentRequest.get(), changeLimitCount);
-				limiter.setLimit(newLimit);
-				// }
-				sleep(ThreadLocalRandom.current().nextInt(10));
-				int limit = limiter.limit.get();
+				limiter.setLimit(limit);
+				maxConcurrentRequest.set(0);
+				sleep(random.nextInt(10));
 				int actualLimit = Math.min(10, limit);
 				int max = maxConcurrentRequest.getAndSet(0);
 				if (max > 0) {
+					// Ignore iterations where nothing was polled (messages consumption slower than iteration)
 					limitsSum += actualLimit;
-					maxSum += max;
-					if (max > actualLimit) {
-						maxOverLimitSum += max - actualLimit;
-					}
-					else {
-						maxBelowLimitSum += actualLimit - max;
-					}
+					maxConcurrentRqSum += max;
 				}
 				int expectedMax = limit;
 				for (int i = changeLimitCount - 1; i >= 0 && i > changeLimitCount - 4; i--) {
-					expectedMax = Math.min(10, Math.max(expectedMax, triangle(i, 30)));
+					expectedMax = Math.min(10, Math.max(expectedMax, progressiveLimitChange.applyAsInt(i)));
 				}
 				lines.add("%d,%d,%d,%d,%d,%d".formatted(max, concurrentRequest.get(), limit, max - actualLimit,
 						expectedMax, max - expectedMax));
 			}
-			assertThat(maxSum).isLessThanOrEqualTo(limitsSum);
-			assertThat(maxBelowLimitSum).isGreaterThan(maxOverLimitSum);
+			assertThat(maxConcurrentRqSum).isLessThanOrEqualTo(limitsSum);
 			Files.writeString(
 					Path.of("/Users/rouchonl/oss/spring-cloud-aws/spring-cloud-aws-sqs/target/concurrent-rq.csv"),
 					String.join("\n", lines), StandardCharsets.UTF_8, StandardOpenOption.CREATE,
@@ -624,16 +652,6 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		}
 		finally {
 			container.stop();
-		}
-	}
-
-	private static int triangle(int changeLimitCount, int period) {
-		int halfPeriod = period / 2;
-		if (changeLimitCount % period < halfPeriod) {
-			return changeLimitCount % halfPeriod;
-		}
-		else {
-			return halfPeriod - (changeLimitCount % halfPeriod);
 		}
 	}
 
