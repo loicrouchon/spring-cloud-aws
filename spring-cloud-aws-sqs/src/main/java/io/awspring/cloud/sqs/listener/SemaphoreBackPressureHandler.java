@@ -50,7 +50,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	private final int totalPermits;
 
 	/**
-	 * The current limit of permits that can be acquired at the current time. The permits limit is defined in the [0,
+	 * The limit of permits that can be acquired at the current time. The permits limit is defined in the [0,
 	 * totalPermits] interval. A value of {@literal 0} means that no permits can be acquired.
 	 * <p>
 	 * This value is updated based on the downstream backpressure reported by the {@link #backPressureLimiter}.
@@ -64,8 +64,8 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	private volatile CurrentThroughputMode currentThroughputMode;
 
 	/**
-	 * The value at the time of the low throughput acquire of the minimum between {@link #permitsLimit} and
-	 * {@link #totalPermits}.
+	 * The number of permits acquired in low throughput mode. This value is minimum value between {@link #permitsLimit}
+	 * at the time of the acquire and {@link #totalPermits}.
 	 */
 	private final AtomicInteger lowThroughputAcquiredPermits = new AtomicInteger(0);
 
@@ -120,20 +120,21 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	}
 
 	private int requestInHighThroughputMode() throws InterruptedException {
-		return tryAcquire(this.batchSize, CurrentThroughputMode.HIGH) ? this.batchSize : tryAcquirePartial();
+		return tryAcquire(this.batchSize, CurrentThroughputMode.HIGH)
+			? this.batchSize
+			: tryAcquirePartial();
 	}
 	// @formatter:on
 
 	private int tryAcquirePartial() throws InterruptedException {
 		int availablePermits = this.semaphore.availablePermits();
-		if (isDraining.get() || availablePermits == 0
-				|| BackPressureMode.ALWAYS_POLL_MAX_MESSAGES.equals(this.backPressureConfiguration)) {
+		if (availablePermits == 0 || BackPressureMode.ALWAYS_POLL_MAX_MESSAGES.equals(this.backPressureConfiguration)) {
 			return 0;
 		}
 		int permitsToRequest = min(availablePermits, this.batchSize);
 		CurrentThroughputMode currentThroughputModeNow = this.currentThroughputMode;
-		logger.trace("Trying to acquire partial batch of {} permits from {} available for {} in TM {}",
-				permitsToRequest, availablePermits, this.id, currentThroughputModeNow);
+		logger.trace("Trying to acquire partial batch of {} permits from {} (limit {}) available for {} in TM {}",
+				permitsToRequest, availablePermits, this.permitsLimit.get(), this.id, currentThroughputModeNow);
 		boolean hasAcquiredPartial = tryAcquire(permitsToRequest, currentThroughputModeNow);
 		return hasAcquiredPartial ? permitsToRequest : 0;
 	}
@@ -141,23 +142,23 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	private int requestInLowThroughputMode() throws InterruptedException {
 		// Although LTM can be set / unset by many processes, only the MessageSource thread gets here,
 		// so no actual concurrency
-		logger.debug("Trying to acquire full permits for {}. Permits left: {}, Permits Limits: {}", this.id,
+		logger.debug("Trying to acquire full permits for {}. Permits left: {}, Permits limit: {}", this.id,
 				this.semaphore.availablePermits(), this.permitsLimit.get());
 		int permitsToRequest = min(this.permitsLimit.get(), this.totalPermits);
 		boolean hasAcquired = tryAcquire(permitsToRequest, CurrentThroughputMode.LOW);
 		if (hasAcquired) {
 			if (permitsToRequest >= this.totalPermits) {
-				logger.debug("Acquired full permits for {}. Permits left: {}, Permits Limits: {}", this.id,
+				logger.debug("Acquired full permits for {}. Permits left: {}, Permits limit: {}", this.id,
 						this.semaphore.availablePermits(), this.permitsLimit.get());
 			}
 			else {
-				logger.debug("Acquired limited permits ({}) for {} . Permits left: {}, Permits Limits: {}",
+				logger.debug("Acquired limited permits ({}) for {} . Permits left: {}, Permits limit: {}",
 						permitsToRequest, this.id, this.semaphore.availablePermits(), this.permitsLimit.get());
 			}
 			int tokens = min(this.batchSize, permitsToRequest);
 			// We've acquired all permits - there's no other process currently processing messages
 			if (!this.hasAcquiredFullPermits.compareAndSet(false, true)) {
-				logger.warn("hasAcquiredFullPermits was already true. Permits left: {}, Permits Limits: {}",
+				logger.warn("hasAcquiredFullPermits was already true. Permits left: {}, Permits limit: {}",
 						this.semaphore.availablePermits(), this.permitsLimit.get());
 			}
 			else {
@@ -177,12 +178,12 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		logger.trace("Acquiring {} permits for {} in TM {}", amount, this.id, this.currentThroughputMode);
 		boolean hasAcquired = this.semaphore.tryAcquire(amount, this.acquireTimeout.toMillis(), TimeUnit.MILLISECONDS);
 		if (hasAcquired) {
-			logger.trace("{} permits acquired for {} in TM {}. Permits left: {}, Permits Limits: {}", amount, this.id,
+			logger.trace("{} permits acquired for {} in TM {}. Permits left: {}, Permits limit: {}", amount, this.id,
 					currentThroughputModeNow, this.semaphore.availablePermits(), this.permitsLimit.get());
 		}
 		else {
 			logger.trace(
-					"Not able to acquire {} permits in {} milliseconds for {} in TM {}. Permits left: {}, Permits Limits: {}",
+					"Not able to acquire {} permits in {} milliseconds for {} in TM {}. Permits left: {}, Permits limit: {}",
 					amount, this.acquireTimeout.toMillis(), this.id, currentThroughputModeNow,
 					this.semaphore.availablePermits(), this.permitsLimit.get());
 		}
@@ -248,7 +249,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		isDraining.set(true);
 		updateMaxPermitsLimit(this.totalPermits);
 		try {
-			return this.semaphore.tryAcquire(totalPermits, (int) timeout.getSeconds(), TimeUnit.SECONDS);
+			return this.semaphore.tryAcquire(this.totalPermits, (int) timeout.getSeconds(), TimeUnit.SECONDS);
 		}
 		catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
@@ -262,8 +263,8 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 
 	private void updateAvailablePermitsBasedOnDownstreamBackpressure() {
 		if (!isDraining.get()) {
-			long limit = backPressureLimiter.limit();
-			int newCurrentMaxPermits = (int) Math.min(Math.max(limit, 0), totalPermits);
+			int limit = backPressureLimiter.limit();
+			int newCurrentMaxPermits = min(limit, totalPermits);
 			updateMaxPermitsLimit(newCurrentMaxPermits);
 			if (isDraining.get()) {
 				updateMaxPermitsLimit(totalPermits);
@@ -272,7 +273,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	}
 
 	private void updateMaxPermitsLimit(int newCurrentMaxPermits) {
-		int oldValue = permitsLimit.getAndUpdate(i -> Math.max(0, Math.min(newCurrentMaxPermits, totalPermits)));
+		int oldValue = permitsLimit.getAndUpdate(i -> min(newCurrentMaxPermits, totalPermits));
 		if (newCurrentMaxPermits < oldValue) {
 			int blockedPermits = oldValue - newCurrentMaxPermits;
 			semaphore.reducePermits(blockedPermits);
@@ -295,7 +296,11 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	}
 
 	private enum CurrentThroughputMode {
-		HIGH, LOW
+
+		HIGH,
+
+		LOW;
+
 	}
 
 	public static class Builder {
