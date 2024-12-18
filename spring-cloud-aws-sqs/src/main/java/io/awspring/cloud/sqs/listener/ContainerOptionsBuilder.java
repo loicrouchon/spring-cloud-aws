@@ -57,6 +57,15 @@ public interface ContainerOptionsBuilder<B extends ContainerOptionsBuilder<B, O>
 	B autoStartup(boolean autoStartup);
 
 	/**
+	 * Sets the amount of time to wait before attempting a new polling when zero messages can be consumed due to the
+	 * configured {@link BackPressureLimiter#limit()} returning {@code 0}. Default is 100 milliseconds.
+	 *
+	 * @return the duration to wait before attempting a new polling attempt.
+	 * @see BackPressureLimiter
+	 */
+	B zeroPermitsLimitSleepDurationDuration(Duration zeroPermitsLimitSleepDurationDuration);
+
+	/**
 	 * Set the maximum time the polling thread should wait for a full batch of permits to be available before trying to
 	 * acquire a partial batch if so configured. A poll is only actually executed if at least one permit is available.
 	 * Default is 10 seconds.

@@ -588,8 +588,10 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		logger.debug("Sent {} messages to queue {}", nbMessages, queueName);
 		var latch = new CountDownLatch(nbMessages);
 		var container = SqsMessageListenerContainer.builder().sqsAsyncClient(BaseSqsIntegrationTest.createAsyncClient())
-				.queueNames(queueName).configure(options -> options.pollTimeout(Duration.ofSeconds(1))
-						.maxConcurrentMessages(10).maxMessagesPerPoll(10).backPressureLimiter(limiter))
+				.queueNames(queueName)
+				.configure(options -> options.pollTimeout(Duration.ofSeconds(1))
+						.zeroPermitsLimitSleepDurationDuration(Duration.ofMillis(1)).maxConcurrentMessages(10)
+						.maxMessagesPerPoll(10).backPressureLimiter(limiter))
 				.messageListener(msg -> {
 					int currentConcurrentRq = concurrentRequest.incrementAndGet();
 					maxConcurrentRequest.updateAndGet(max -> Math.max(max, currentConcurrentRq));
@@ -604,10 +606,10 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 			int period = 30;
 			int halfPeriod = period / 2;
 			if (x % period < halfPeriod) {
-				return x % halfPeriod;
+				return (x % halfPeriod);
 			}
 			else {
-				return halfPeriod - (x % halfPeriod);
+				return (halfPeriod - (x % halfPeriod));
 			}
 		};
 		try {
