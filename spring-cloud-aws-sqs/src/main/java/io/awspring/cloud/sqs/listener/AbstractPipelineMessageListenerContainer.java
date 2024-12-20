@@ -228,7 +228,7 @@ public abstract class AbstractPipelineMessageListenerContainer<T, O extends Cont
 		O containerOptions = getContainerOptions();
 		return SemaphoreBackPressureHandler.builder().batchSize(containerOptions.getMaxMessagesPerPoll())
 				.totalPermits(containerOptions.getMaxConcurrentMessages())
-				.zeroPermitsLimitSleepDuration(containerOptions.getZeroPermitsLimitSleepDurationDuration())
+				.standbyLimitPollingInterval(containerOptions.getStandbyLimitPollingInterval())
 				.acquireTimeout(containerOptions.getMaxDelayBetweenPolls())
 				.throughputConfiguration(containerOptions.getBackPressureMode())
 				.backPressureLimiter(containerOptions.getBackPressureLimiter()).build();

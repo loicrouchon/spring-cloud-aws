@@ -30,7 +30,8 @@ public interface BackPressureLimiter {
 	 * The following values will have the following effects:
 	 *
 	 * <ul>
-	 * <li>zero or negative limits will stop consumption from the queue.</li>
+	 * <li>zero or negative limits will stop consumption from the queue. When such a situation occurs, the queue
+	 * processing is said to be on "standby".</li>
 	 * <li>Values >= 1 and < {@link ContainerOptions#getMaxConcurrentMessages()} will reduce the queue consumption
 	 * capabilities of the next polling attempts.</li>
 	 * <li>Values >= {@link ContainerOptions#getMaxConcurrentMessages()} will not reduce the queue consumption

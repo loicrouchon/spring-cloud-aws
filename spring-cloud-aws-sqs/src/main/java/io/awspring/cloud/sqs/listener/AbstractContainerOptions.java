@@ -47,7 +47,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 	private final Duration maxDelayBetweenPolls;
 
-	private final Duration zeroPermitsLimitSleepDurationDuration;
+	private final Duration standbyLimitPollingInterval;
 
 	private final Duration listenerShutdownTimeout;
 
@@ -84,7 +84,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 		this.autoStartup = builder.autoStartup;
 		this.pollTimeout = builder.pollTimeout;
 		this.pollBackOffPolicy = builder.pollBackOffPolicy;
-		this.zeroPermitsLimitSleepDurationDuration = builder.zeroPermitsLimitSleepDurationDuration;
+		this.standbyLimitPollingInterval = builder.standbyLimitPollingInterval;
 		this.maxDelayBetweenPolls = builder.maxDelayBetweenPolls;
 		this.listenerShutdownTimeout = builder.listenerShutdownTimeout;
 		this.acknowledgementShutdownTimeout = builder.acknowledgementShutdownTimeout;
@@ -129,8 +129,8 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 	}
 
 	@Override
-	public Duration getZeroPermitsLimitSleepDurationDuration() {
-		return this.zeroPermitsLimitSleepDurationDuration;
+	public Duration getStandbyLimitPollingInterval() {
+		return this.standbyLimitPollingInterval;
 	}
 
 	@Override
@@ -222,7 +222,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 		private static final BackOffPolicy DEFAULT_POLL_BACK_OFF_POLICY = buildDefaultBackOffPolicy();
 
-		private static final Duration DEFAULT_DEPLETED_PERMITS_LIMIT_CHECK_INTERVAL = Duration.ofMillis(100);
+		private static final Duration DEFAULT_STANDBY_LIMIT_POLLING_INTERVAL = Duration.ofMillis(100);
 
 		private static final Duration DEFAULT_SEMAPHORE_TIMEOUT = Duration.ofSeconds(10);
 
@@ -250,7 +250,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 		private BackOffPolicy pollBackOffPolicy = DEFAULT_POLL_BACK_OFF_POLICY;
 
-		private Duration zeroPermitsLimitSleepDurationDuration = DEFAULT_DEPLETED_PERMITS_LIMIT_CHECK_INTERVAL;
+		private Duration standbyLimitPollingInterval = DEFAULT_STANDBY_LIMIT_POLLING_INTERVAL;
 
 		private Duration maxDelayBetweenPolls = DEFAULT_SEMAPHORE_TIMEOUT;
 
@@ -341,10 +341,9 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 		}
 
 		@Override
-		public B zeroPermitsLimitSleepDurationDuration(Duration zeroPermitsLimitSleepDurationDuration) {
-			Assert.notNull(zeroPermitsLimitSleepDurationDuration,
-					"zeroPermitsLimitSleepDurationDuration cannot be null");
-			this.zeroPermitsLimitSleepDurationDuration = zeroPermitsLimitSleepDurationDuration;
+		public B standbyLimitPollingInterval(Duration standbyLimitPollingInterval) {
+			Assert.notNull(standbyLimitPollingInterval, "standbyLimitPollingInterval cannot be null");
+			this.standbyLimitPollingInterval = standbyLimitPollingInterval;
 			return self();
 		}
 

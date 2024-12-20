@@ -57,13 +57,13 @@ public interface ContainerOptionsBuilder<B extends ContainerOptionsBuilder<B, O>
 	B autoStartup(boolean autoStartup);
 
 	/**
-	 * Sets the amount of time to wait before attempting a new polling when zero messages can be consumed due to the
-	 * configured {@link BackPressureLimiter#limit()} returning {@code 0}. Default is 100 milliseconds.
+	 * Sets the amount of time to wait before checking again for the current limit when the queue processing is on
+	 * standby.
 	 *
-	 * @return the duration to wait before attempting a new polling attempt.
-	 * @see BackPressureLimiter
+	 * @return this instance.
+	 * @see BackPressureLimiter#limit()
 	 */
-	B zeroPermitsLimitSleepDurationDuration(Duration zeroPermitsLimitSleepDurationDuration);
+	B standbyLimitPollingInterval(Duration standbyLimitPollingInterval);
 
 	/**
 	 * Set the maximum time the polling thread should wait for a full batch of permits to be available before trying to

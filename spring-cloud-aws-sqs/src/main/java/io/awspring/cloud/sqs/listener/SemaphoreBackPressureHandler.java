@@ -57,7 +57,10 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	 */
 	private final AtomicInteger permitsLimit;
 
-	private final Duration zeroPermitsLimitSleepDuration;
+	/**
+	 * The duration to sleep when the queue processing is in standby.
+	 */
+	private final Duration standbyLimitPollingInterval;
 
 	private final Duration acquireTimeout;
 
@@ -80,7 +83,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 	private SemaphoreBackPressureHandler(Builder builder) {
 		this.batchSize = builder.batchSize;
 		this.totalPermits = builder.totalPermits;
-		this.zeroPermitsLimitSleepDuration = builder.zeroPermitsLimitSleepDuration;
+		this.standbyLimitPollingInterval = builder.standbyLimitPollingInterval;
 		this.acquireTimeout = builder.acquireTimeout;
 		this.backPressureConfiguration = builder.backPressureMode;
 		this.semaphore = new ReducibleSemaphore(totalPermits);
@@ -150,8 +153,8 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		int permitsToRequest = min(this.permitsLimit.get(), this.totalPermits);
 		if (permitsToRequest == 0) {
 			logger.info("No permits usable for {} (limit = 0), sleeping for {}", this.id,
-					this.zeroPermitsLimitSleepDuration);
-			Thread.sleep(zeroPermitsLimitSleepDuration.toMillis());
+					this.standbyLimitPollingInterval);
+			Thread.sleep(standbyLimitPollingInterval.toMillis());
 			return 0;
 		}
 		boolean hasAcquired = tryAcquire(permitsToRequest, CurrentThroughputMode.LOW);
@@ -318,7 +321,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 
 		private int totalPermits;
 
-		private Duration zeroPermitsLimitSleepDuration;
+		private Duration standbyLimitPollingInterval;
 
 		private Duration acquireTimeout;
 
@@ -336,8 +339,8 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 			return this;
 		}
 
-		public Builder zeroPermitsLimitSleepDuration(Duration zeroPermitsLimitSleepDuration) {
-			this.zeroPermitsLimitSleepDuration = zeroPermitsLimitSleepDuration;
+		public Builder standbyLimitPollingInterval(Duration standbyLimitPollingInterval) {
+			this.standbyLimitPollingInterval = standbyLimitPollingInterval;
 			return this;
 		}
 
@@ -357,7 +360,7 @@ public class SemaphoreBackPressureHandler implements BatchAwareBackPressureHandl
 		}
 
 		public SemaphoreBackPressureHandler build() {
-			Assert.noNullElements(Arrays.asList(this.batchSize, this.totalPermits, this.zeroPermitsLimitSleepDuration,
+			Assert.noNullElements(Arrays.asList(this.batchSize, this.totalPermits, this.standbyLimitPollingInterval,
 					this.acquireTimeout, this.backPressureMode), "Missing configuration");
 			return new SemaphoreBackPressureHandler(this);
 		}

@@ -277,6 +277,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		logger.debug("Sent message to queue {} with messageBody {}", MANUALLY_CREATE_INACTIVE_CONTAINER_QUEUE_NAME,
 				messageBody);
 		assertThat(latchContainer.manuallyInactiveCreatedContainerLatch.await(10, TimeUnit.SECONDS)).isTrue();
+		inactiveMessageListenerContainer.stop();
 	}
 
 	// @formatter:off
@@ -590,7 +591,7 @@ class SqsIntegrationTests extends BaseSqsIntegrationTest {
 		var container = SqsMessageListenerContainer.builder().sqsAsyncClient(BaseSqsIntegrationTest.createAsyncClient())
 				.queueNames(queueName)
 				.configure(options -> options.pollTimeout(Duration.ofSeconds(1))
-						.zeroPermitsLimitSleepDurationDuration(Duration.ofMillis(1)).maxConcurrentMessages(10)
+						.standbyLimitPollingInterval(Duration.ofMillis(1)).maxConcurrentMessages(10)
 						.maxMessagesPerPoll(10).backPressureLimiter(limiter))
 				.messageListener(msg -> {
 					int currentConcurrentRq = concurrentRequest.incrementAndGet();
