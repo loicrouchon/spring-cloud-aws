@@ -20,6 +20,7 @@ import io.awspring.cloud.sqs.listener.acknowledgement.handler.AcknowledgementMod
 import io.awspring.cloud.sqs.support.converter.MessagingMessageConverter;
 import io.awspring.cloud.sqs.support.converter.SqsMessagingMessageConverter;
 import java.time.Duration;
+import java.util.function.Supplier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.lang.Nullable;
 import org.springframework.retry.backoff.BackOffPolicy;
@@ -55,7 +56,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 	private final BackPressureMode backPressureMode;
 
-	private final BackPressureLimiter backPressureLimiter;
+	private final Supplier<BackPressureHandler> backPressureHandlerSupplier;
 
 	private final ListenerMode listenerMode;
 
@@ -89,7 +90,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 		this.listenerShutdownTimeout = builder.listenerShutdownTimeout;
 		this.acknowledgementShutdownTimeout = builder.acknowledgementShutdownTimeout;
 		this.backPressureMode = builder.backPressureMode;
-		this.backPressureLimiter = builder.backPressureLimiter;
+		this.backPressureHandlerSupplier = builder.backPressureHandlerSupplier;
 		this.listenerMode = builder.listenerMode;
 		this.messageConverter = builder.messageConverter;
 		this.acknowledgementMode = builder.acknowledgementMode;
@@ -166,8 +167,8 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 	}
 
 	@Override
-	public BackPressureLimiter getBackPressureLimiter() {
-		return this.backPressureLimiter;
+	public Supplier<BackPressureHandler> getBackPressureHandlerSupplier() {
+		return this.backPressureHandlerSupplier;
 	}
 
 	@Override
@@ -232,7 +233,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 		private static final BackPressureMode DEFAULT_THROUGHPUT_CONFIGURATION = BackPressureMode.AUTO;
 
-		private static final BackPressureLimiter DEFAULT_BACKPRESSURE_LIMITER = null;
+		private static final Supplier<BackPressureHandler> DEFAULT_BACKPRESSURE_LIMITER = null;
 
 		private static final ListenerMode DEFAULT_MESSAGE_DELIVERY_STRATEGY = ListenerMode.SINGLE_MESSAGE;
 
@@ -256,7 +257,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 
 		private BackPressureMode backPressureMode = DEFAULT_THROUGHPUT_CONFIGURATION;
 
-		private BackPressureLimiter backPressureLimiter = DEFAULT_BACKPRESSURE_LIMITER;
+		private Supplier<BackPressureHandler> backPressureHandlerSupplier = DEFAULT_BACKPRESSURE_LIMITER;
 
 		private Duration listenerShutdownTimeout = DEFAULT_LISTENER_SHUTDOWN_TIMEOUT;
 
@@ -296,7 +297,7 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 			this.listenerShutdownTimeout = options.listenerShutdownTimeout;
 			this.acknowledgementShutdownTimeout = options.acknowledgementShutdownTimeout;
 			this.backPressureMode = options.backPressureMode;
-			this.backPressureLimiter = options.backPressureLimiter;
+			this.backPressureHandlerSupplier = options.backPressureHandlerSupplier;
 			this.listenerMode = options.listenerMode;
 			this.messageConverter = options.messageConverter;
 			this.acknowledgementMode = options.acknowledgementMode;
@@ -397,8 +398,8 @@ public abstract class AbstractContainerOptions<O extends ContainerOptions<O, B>,
 		}
 
 		@Override
-		public B backPressureLimiter(BackPressureLimiter backPressureLimiter) {
-			this.backPressureLimiter = backPressureLimiter;
+		public B backPressureHandlerSupplier(Supplier<BackPressureHandler> backPressureHandlerSupplier) {
+			this.backPressureHandlerSupplier = backPressureHandlerSupplier;
 			return self();
 		}
 
